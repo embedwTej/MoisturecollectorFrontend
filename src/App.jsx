@@ -26,9 +26,10 @@ import {
 
 // Dynamically determine the API Base URL based on where the browser is running.
 // If local, point to port 3000. If deployed on Vercel, use relative paths.
-const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? 'http://localhost:3000'
-  : '';
+const API_BASE = import.meta.env.VITE_API_URL || 
+  ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:3000'
+    : '');
 
 // Custom MetaYB logo matching the user's provided wordmark
 const MetaYBLogo = () => (
