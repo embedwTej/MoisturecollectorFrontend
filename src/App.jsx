@@ -26,10 +26,14 @@ import {
 
 // Dynamically determine the API Base URL based on where the browser is running.
 // If local, point to port 3000. If deployed on Vercel, use relative paths.
-const API_BASE = import.meta.env.VITE_API_URL || 
+let API_BASE = import.meta.env.VITE_API_URL || 
   ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? 'http://localhost:3000'
     : 'https://moisture-collector-backend.vercel.app');
+
+if (API_BASE && !API_BASE.startsWith('http://') && !API_BASE.startsWith('https://')) {
+  API_BASE = `https://${API_BASE}`;
+}
 
 // Custom MetaYB logo matching the user's provided wordmark
 const MetaYBLogo = () => (
