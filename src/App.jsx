@@ -65,30 +65,38 @@ function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [stats, setStats] = useState({
     total: 0,
-    average: 0,
+    average: "0.000",
     critical: 0,
     safe: 0
   });
 
-  // Fetch initial data
+  // Fetch initial data & set up fallback auto-polling (every 5 seconds) to handle serverless disconnects
   useEffect(() => {
-    fetch(`${API_BASE}/api/v1/dashboard/submissions`)
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setSubmissions(data);
-        } else {
-          console.error("Expected array but got:", data);
+    const fetchData = () => {
+      fetch(`${API_BASE}/api/v1/dashboard/submissions`)
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            setSubmissions(data);
+          } else {
+            console.error("Expected array but got:", data);
+            setSubmissions([]);
+          }
+        })
+        .catch(err => {
+          console.error("Error loading submissions:", err);
           setSubmissions([]);
-        }
-      })
-      .catch(err => {
-        console.error("Error loading submissions:", err);
-        setSubmissions([]);
-      });
+        });
+    };
+
+    fetchData(); // Initial load
+
+    const interval = setInterval(fetchData, 5000); // Auto-fetch fallback every 5 seconds
+
+    return () => clearInterval(interval);
   }, []);
 
-  // Connect to SSE stream
+  // Connect to SSE stream for instant real-time pushes
   useEffect(() => {
     const eventSource = new EventSource(`${API_BASE}/api/v1/dashboard/stream`);
 
@@ -107,6 +115,10 @@ function App() {
         if (data.type === 'new_submission') {
           setSubmissions(prev => {
             const currentSubmissions = Array.isArray(prev) ? prev : [];
+            // Only add if it doesn't already exist to avoid duplicate keys during polling overlap
+            if (currentSubmissions.some(s => s.gateEntryNo === data.payload.gateEntryNo)) {
+              return currentSubmissions;
+            }
             return [data.payload, ...currentSubmissions];
           });
         }
@@ -124,15 +136,17 @@ function App() {
   useEffect(() => {
     const currentSubmissions = Array.isArray(submissions) ? submissions : [];
     if (currentSubmissions.length === 0) {
-      setStats({ total: 0, average: 0, critical: 0, safe: 0 });
+      setStats({ total: 0, average: "0.000", critical: 0, safe: 0 });
       return;
     }
 
     const total = currentSubmissions.length;
-    const sum = currentSubmissions.reduce((acc, curr) => acc + curr.averageMoisture, 0);
-    const average = (sum / total).toFixed(1);
-    const critical = currentSubmissions.filter(s => s.averageMoisture >= 18).length;
-    const safe = currentSubmissions.filter(s => s.averageMoisture < 14).length;
+    const sum = currentSubmissions.reduce((acc, curr) => acc + (Number(curr.averageMoisture) || 0), 0);
+    const average = (sum / total).toFixed(3); // Formatted to 3 decimal places
+    
+    // Updated threshold limits (Safe: <14%, Warning: 14%-16%, Critical: >=16%)
+    const critical = currentSubmissions.filter(s => Number(s.averageMoisture) >= 16).length;
+    const safe = currentSubmissions.filter(s => Number(s.averageMoisture) < 14).length;
 
     setStats({
       total,
@@ -149,13 +163,15 @@ function App() {
     .reverse()
     .map(s => ({
       time: s.submittedAt ? s.submittedAt.split(', ')[1]?.substring(0, 5) || 'N/A' : 'N/A',
-      moisture: s.averageMoisture,
+      moisture: Number(s.averageMoisture).toFixed(3),
       vehicle: s.vehicleNo
     }));
 
+  // Warning thresholds definition
   const getMoistureStatus = (val) => {
-    if (val >= 18) return { label: 'CRITICAL', class: 'high', desc: 'Too Wet (>18%)' };
-    if (val >= 14) return { label: 'WARNING', class: 'mod', desc: 'Moist (14%-18%)' };
+    const numericVal = Number(val) || 0;
+    if (numericVal >= 16) return { label: 'CRITICAL', class: 'high', desc: 'Too Wet (>=16%)' };
+    if (numericVal >= 14) return { label: 'WARNING', class: 'mod', desc: 'Moist (14%-16%)' };
     return { label: 'SAFE', class: 'low', desc: 'Dry (<14%)' };
   };
 
@@ -178,7 +194,7 @@ function App() {
         <div className="status-section">
           <div className="connection-status">
             <div className={`status-dot ${isConnected ? 'online' : 'offline'}`}></div>
-            <span>{isConnected ? 'Live Sync Active' : 'Offline / Reconnecting'}</span>
+            <span>{isConnected ? 'Live Sync Active' : 'Auto-polling Active'}</span>
           </div>
         </div>
       </header>
@@ -262,6 +278,7 @@ function App() {
                       }}
                       labelStyle={{ color: 'var(--text-muted)' }}
                       itemStyle={{ color: 'var(--text-main)' }}
+                      formatter={(value) => [`${value}%`, 'Moisture']}
                     />
                     <Area type="monotone" dataKey="moisture" stroke="var(--accent)" strokeWidth={2.5} fillOpacity={1} fill="url(#colorMoisture)" />
                   </AreaChart>
@@ -353,7 +370,7 @@ function App() {
                         <td>{sub.productName}</td>
                         <td>
                           <span className={`moisture-badge ${status.class}`}>
-                            {sub.averageMoisture}%
+                            {(Number(sub.averageMoisture) || 0).toFixed(3)}%
                             <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>({status.label})</span>
                           </span>
                         </td>
