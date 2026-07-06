@@ -9,7 +9,8 @@ import {
   Truck,
   User,
   Calendar,
-  Layers
+  Layers,
+  Settings
 } from 'lucide-react';
 import {
   AreaChart,
@@ -35,40 +36,54 @@ if (API_BASE && !API_BASE.startsWith('http://') && !API_BASE.startsWith('https:/
   API_BASE = `https://${API_BASE}`;
 }
 
-// Custom MetaYB logo matching the user's provided wordmark
+// Custom MetaYB Logo displaying the exact uploaded logo image
 const MetaYBLogo = () => (
-  <div style={{ display: 'flex', alignItems: 'center', gap: '0.125rem', userSelect: 'none' }}>
-    <svg width="28" height="28" viewBox="0 0 60 60" fill="none" style={{ display: 'block' }}>
-      <path 
-        d="M 12 48 V 28 A 8 8 0 0 1 28 28 V 48 M 28 48 V 28 A 8 8 0 0 1 44 28 V 48" 
-        stroke="#3b82f6" 
-        strokeWidth="7" 
-        strokeLinecap="round" 
-        strokeLinejoin="round" 
-      />
-    </svg>
-    <span style={{ 
-      fontFamily: '"Comfortaa", cursive, sans-serif', 
-      fontSize: '1.65rem', 
-      fontWeight: '700', 
-      color: '#3b82f6', 
-      letterSpacing: '-0.06em',
-      marginLeft: '-3px',
-      transform: 'translateY(-1px)',
-      display: 'inline-block'
-    }}>etayb</span>
+  <div style={{ display: 'flex', alignItems: 'center', height: '32px', userSelect: 'none' }}>
+    <img 
+      src="/metayb_logo.jpg" 
+      alt="MetaYB Logo" 
+      style={{ 
+        height: '28px', 
+        objectFit: 'contain', 
+        display: 'block' 
+      }} 
+    />
   </div>
 );
 
 function App() {
   const [submissions, setSubmissions] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
+  
+  // Interactive Threshold States with localStorage persistence
+  const [safeThreshold, setSafeThreshold] = useState(() => {
+    const saved = localStorage.getItem('safeThreshold');
+    return saved !== null ? parseFloat(saved) : 14.0;
+  });
+  const [criticalThreshold, setCriticalThreshold] = useState(() => {
+    const saved = localStorage.getItem('criticalThreshold');
+    return saved !== null ? parseFloat(saved) : 16.0;
+  });
+
   const [stats, setStats] = useState({
     total: 0,
     average: "0.000",
     critical: 0,
     safe: 0
   });
+
+  // Handle threshold modifications
+  const handleThresholdChange = (type, val) => {
+    if (type === 'safe') {
+      if (val >= criticalThreshold) return; // Prevent overlap
+      setSafeThreshold(val);
+      localStorage.setItem('safeThreshold', val.toString());
+    } else if (type === 'critical') {
+      if (val <= safeThreshold) return; // Prevent overlap
+      setCriticalThreshold(val);
+      localStorage.setItem('criticalThreshold', val.toString());
+    }
+  };
 
   // Fetch initial data & set up fallback auto-polling (every 5 seconds) to handle serverless disconnects
   useEffect(() => {
@@ -132,7 +147,7 @@ function App() {
     };
   }, []);
 
-  // Recalculate stats whenever submissions change
+  // Recalculate stats whenever submissions or thresholds change
   useEffect(() => {
     const currentSubmissions = Array.isArray(submissions) ? submissions : [];
     if (currentSubmissions.length === 0) {
@@ -144,9 +159,9 @@ function App() {
     const sum = currentSubmissions.reduce((acc, curr) => acc + (Number(curr.averageMoisture) || 0), 0);
     const average = (sum / total).toFixed(3); // Formatted to 3 decimal places
     
-    // Updated threshold limits (Safe: <14%, Warning: 14%-16%, Critical: >=16%)
-    const critical = currentSubmissions.filter(s => Number(s.averageMoisture) >= 16).length;
-    const safe = currentSubmissions.filter(s => Number(s.averageMoisture) < 14).length;
+    // Updated threshold limits based on dynamic states
+    const critical = currentSubmissions.filter(s => Number(s.averageMoisture) >= criticalThreshold).length;
+    const safe = currentSubmissions.filter(s => Number(s.averageMoisture) < safeThreshold).length;
 
     setStats({
       total,
@@ -154,7 +169,7 @@ function App() {
       critical,
       safe
     });
-  }, [submissions]);
+  }, [submissions, safeThreshold, criticalThreshold]);
 
   // Format chart data (reverse to chronological order for line/area chart)
   const currentSubmissions = Array.isArray(submissions) ? submissions : [];
@@ -170,9 +185,13 @@ function App() {
   // Warning thresholds definition
   const getMoistureStatus = (val) => {
     const numericVal = Number(val) || 0;
-    if (numericVal >= 16) return { label: 'CRITICAL', class: 'high', desc: 'Too Wet (>=16%)' };
-    if (numericVal >= 14) return { label: 'WARNING', class: 'mod', desc: 'Moist (14%-16%)' };
-    return { label: 'SAFE', class: 'low', desc: 'Dry (<14%)' };
+    if (numericVal >= criticalThreshold) {
+      return { label: 'CRITICAL', class: 'high', desc: `Too Wet (>=${criticalThreshold}%)` };
+    }
+    if (numericVal >= safeThreshold) {
+      return { label: 'WARNING', class: 'mod', desc: `Moist (${safeThreshold}%-${criticalThreshold}%)` };
+    }
+    return { label: 'SAFE', class: 'low', desc: `Dry (<${safeThreshold}%)` };
   };
 
   return (
@@ -292,45 +311,95 @@ function App() {
             </div>
           </div>
 
-          {/* Value Distribution */}
-          <div className="visual-panel">
-            <div className="panel-header">
-              <span className="panel-title">Distribution</span>
+          {/* Right Column: Distribution Chart & Threshold Settings */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            {/* Value Distribution Chart */}
+            <div className="visual-panel" style={{ flex: 1 }}>
+              <div className="panel-header">
+                <span className="panel-title">Distribution</span>
+              </div>
+              <div className="chart-container" style={{ height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {currentSubmissions.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={[
+                      { name: 'Safe', count: stats.safe, fill: '#059669' },
+                      { name: 'Warning', count: stats.total - stats.safe - stats.critical, fill: '#d97706' },
+                      { name: 'Critical', count: stats.critical, fill: '#dc2626' }
+                    ]}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="name" stroke="var(--text-muted)" fontSize={10} />
+                      <YAxis stroke="var(--text-muted)" fontSize={10} allowDecimals={false} />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: 'var(--bg-card)', 
+                          borderColor: 'var(--border)', 
+                          borderRadius: '8px',
+                          color: 'var(--text-main)',
+                          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.05)'
+                        }}
+                        itemStyle={{ color: 'var(--text-main)' }}
+                      />
+                      <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                        <Cell fill="#059669" />
+                        <Cell fill="#d97706" />
+                        <Cell fill="#dc2626" />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="empty-state" style={{ padding: '1rem 0' }}>
+                    <Layers size={30} />
+                    <p style={{ fontSize: '0.875rem' }}>No data</p>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="chart-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {currentSubmissions.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={[
-                    { name: 'Safe', count: stats.safe, fill: '#059669' },
-                    { name: 'Warning', count: stats.total - stats.safe - stats.critical, fill: '#d97706' },
-                    { name: 'Critical', count: stats.critical, fill: '#dc2626' }
-                  ]}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                    <XAxis dataKey="name" stroke="var(--text-muted)" fontSize={11} />
-                    <YAxis stroke="var(--text-muted)" fontSize={11} allowDecimals={false} />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: 'var(--bg-card)', 
-                        borderColor: 'var(--border)', 
-                        borderRadius: '8px',
-                        color: 'var(--text-main)',
-                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.05)'
-                      }}
-                      itemStyle={{ color: 'var(--text-main)' }}
-                    />
-                    <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                      <Cell fill="#059669" />
-                      <Cell fill="#d97706" />
-                      <Cell fill="#dc2626" />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="empty-state">
-                  <Layers size={40} />
-                  <p>No data</p>
+
+            {/* Threshold Settings Panel */}
+            <div className="visual-panel">
+              <div className="panel-header" style={{ marginBottom: '1rem' }}>
+                <span className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
+                  <Settings size={18} color="var(--accent)" />
+                  Threshold Settings
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    <span style={{ color: 'var(--text-main)' }}>Safe Limit (Dry)</span>
+                    <span style={{ color: 'var(--success)' }}>&lt; {safeThreshold.toFixed(1)}%</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="10.0" 
+                    max="15.0" 
+                    step="0.1" 
+                    value={safeThreshold} 
+                    onChange={(e) => handleThresholdChange('safe', parseFloat(e.target.value))}
+                    style={{ width: '100%', cursor: 'pointer', accentColor: 'var(--success)' }}
+                  />
                 </div>
-              )}
+
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    <span style={{ color: 'var(--text-main)' }}>Critical Limit (Wet)</span>
+                    <span style={{ color: 'var(--danger)' }}>&ge; {criticalThreshold.toFixed(1)}%</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="15.0" 
+                    max="22.0" 
+                    step="0.1" 
+                    value={criticalThreshold} 
+                    onChange={(e) => handleThresholdChange('critical', parseFloat(e.target.value))}
+                    style={{ width: '100%', cursor: 'pointer', accentColor: 'var(--danger)' }}
+                  />
+                </div>
+                
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                  Adjusting these limits will dynamically update metrics, alert badges, and charts in real-time.
+                </div>
+              </div>
             </div>
           </div>
         </section>
